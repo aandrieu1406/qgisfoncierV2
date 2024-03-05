@@ -736,7 +736,7 @@ class QGisFoncierDialog(QtWidgets.QDialog, FORM_CLASS):
         val_progression=35        
         self.progressBar.setValue(val_progression) 
 
-        req="SELECT "+schemaProd+".__4_uf_espace_residuel_lots2et3('"+schemaProd+"','"+idcom+"',"+largeur_min+","+surf_dense+");"
+        req="SELECT "+schemaProd+".__4_uf_espace_residuel_lots2et3('"+schemaProd+"','"+idcom+"',"+largeur_min+","+surf_dense+","+taux_convexhull+");"
         cur.execute(req)
         conn.commit()
         val_progression=40        

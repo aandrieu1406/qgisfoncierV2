@@ -2,7 +2,8 @@ CREATE OR REPLACE FUNCTION public.__4_uf_espace_residuel_lots2et3(
 	schema_prod text,
 	idcom text,
 	largeur_min integer,
-	surf_dense integer
+	surf_dense integer,
+	taux_convexhull float
 	)
     RETURNS void
     LANGUAGE 'plpgsql'
@@ -54,33 +55,39 @@ BEGIN
 	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_ap_deg_max_' || idcom || ' ADD CONSTRAINT gf_ap_deg_max_' || idcom || '_pkey PRIMARY KEY(gid_ap)';
 	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_ap_deg_max_' || idcom || ' using GIST (geom_ap_dgrp)';
 
+	--Ajout coefficient de Gravelius: 0,28*(P/sqrt(A)) (P= périmètre, A = aire)
 	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_ap_deg_max_' || idcom || ' ADD COLUMN gravelius NUMERIC';
 	EXECUTE 'UPDATE ' || schema_prod || '.gf_ap_deg_max_' || idcom || ' SET gravelius = 0.28*(ST_PERIMETER(geom_ap_dgrp)/SQRT(ST_AREA(geom_ap_dgrp)))';
+
+	--Ajout coefficient de formes particulières (pour détecter les routes de lotissement par exemple)
+	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_ap_deg_max_' || idcom || ' ADD COLUMN taux_convexhull NUMERIC';
+	EXECUTE 'UPDATE ' || schema_prod || '.gf_ap_deg_max_' || idcom || ' SET taux_convexhull = 
+		CASE WHEN ST_AREA(geom_ap_dgrp) >0 THEN (ST_AREA(geom_ap_dgrp)/ST_AREA(ST_ConvexHull(geom_ap_dgrp))*100) END';			
 
 	--Classement des espaces résiduels en fonction des critères de surfaces et du coeff de Gravelius cf tableau p 15
 	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_ap_deg_max_' || idcom || ' ADD COLUMN constructible VARCHAR(1)';
 
 	EXECUTE 'UPDATE ' || schema_prod || '.gf_ap_deg_max_' || idcom || ' SET constructible = 
 		(CASE 
-			WHEN surface >= (' || surf_dense || ' * 5) THEN ''O''
-			WHEN surface >= (' || surf_dense || ' * 1.5) AND surface < (' || surf_dense || ' * 5) AND gravelius < 1.95 THEN ''O''
-			WHEN surface >= (' || surf_dense || ') AND surface < (' || surf_dense || ' * 1.5) AND gravelius < 1.4 THEN ''O''
+			WHEN surface >= (' || surf_dense || ' * 5) AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
+			WHEN surface >= (' || surf_dense || ' * 1.5) AND surface < (' || surf_dense || ' * 5) AND gravelius < 1.95 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
+			WHEN surface >= (' || surf_dense || ') AND surface < (' || surf_dense || ' * 1.5) AND gravelius < 1.4 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
 			ELSE ''N''
 		END) WHERE code_densite = 1';
 		
 	EXECUTE 'UPDATE ' || schema_prod || '.gf_ap_deg_max_' || idcom || ' SET constructible = 
 		(CASE 
-			WHEN surface >= ' || surf_groupee || ' * 4 THEN ''O''
-			WHEN surface >= (' || surf_groupee || ' * 2) AND surface < (' || surf_groupee || ' * 4) AND gravelius < 2.05 THEN ''O''
-			WHEN surface >= (' || surf_groupee || ') AND surface < (' || surf_groupee || ' * 2) AND gravelius < 1.5 THEN ''O''
+			WHEN surface >= ' || surf_groupee || ' * 4 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
+			WHEN surface >= (' || surf_groupee || ' * 2) AND surface < (' || surf_groupee || ' * 4) AND gravelius < 2.05 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
+			WHEN surface >= (' || surf_groupee || ') AND surface < (' || surf_groupee || ' * 2) AND gravelius < 1.5 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
 			ELSE ''N''
 		END) WHERE code_densite = 2';
 		
 	EXECUTE 'UPDATE ' || schema_prod || '.gf_ap_deg_max_' || idcom || ' SET constructible = 
 		(CASE 
-			WHEN surface >= ' || surf_diffuse || ' * 3 THEN ''O''
-			WHEN surface >= (' || surf_diffuse || ' * 1.5) AND surface < (' || surf_diffuse || ' * 3) AND gravelius < 2.25 THEN ''O''
-			WHEN surface >= (' || surf_diffuse || ') AND surface < (' || surf_diffuse || ' * 1.5) AND gravelius < 1.75 THEN ''O''
+			WHEN surface >= ' || surf_diffuse || ' * 3 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
+			WHEN surface >= (' || surf_diffuse || ' * 1.5) AND surface < (' || surf_diffuse || ' * 3) AND gravelius < 2.25 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
+			WHEN surface >= (' || surf_diffuse || ') AND surface < (' || surf_diffuse || ' * 1.5) AND gravelius < 1.75 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
 			ELSE ''N''
 		END) WHERE code_densite IN (3,4)';
 
@@ -205,30 +212,35 @@ BEGIN
 	EXECUTE 'UPDATE ' || schema_prod || '.gf_uf_bat_lot3_union_' || idcom || ' SET gravelius = 
 		CASE WHEN ST_AREA(geom) >0 THEN 0.28*(ST_PERIMETER(geom)/SQRT(ST_AREA(geom))) END';
 
+	--Ajout coefficient de formes particulières (pour détecter les routes de lotissement par exemple)
+	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_uf_bat_lot3_union_' || idcom || ' ADD COLUMN taux_convexhull NUMERIC';
+	EXECUTE 'UPDATE ' || schema_prod || '.gf_uf_bat_lot3_union_' || idcom || ' SET taux_convexhull = 
+		CASE WHEN ST_AREA(geom) >0 THEN (ST_AREA(geom)/ST_AREA(ST_ConvexHull(geom))*100) END';		
+
 	--Classement des UF en fonction des critères de surfaces et du coeff de Gravelius cf tableau p 15
 	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_uf_bat_lot3_union_' || idcom || ' ADD COLUMN constructible VARCHAR(1)';
 
 	EXECUTE 'UPDATE ' || schema_prod || '.gf_uf_bat_lot3_union_' || idcom || ' SET constructible = 
 		(CASE 
-			WHEN surface >= (' || surf_dense || ' * 5) THEN ''O''
-			WHEN surface >= (' || surf_dense || ' * 1.5) AND surface < (' || surf_dense || ' * 5) AND gravelius < 1.95 THEN ''O''
-			WHEN surface >= (' || surf_dense || ') AND surface < (' || surf_dense || ' * 1.5) AND gravelius < 1.4 THEN ''O''
+			WHEN surface >= (' || surf_dense || ' * 5) AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
+			WHEN surface >= (' || surf_dense || ' * 1.5) AND surface < (' || surf_dense || ' * 5) AND gravelius < 1.95 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
+			WHEN surface >= (' || surf_dense || ') AND surface < (' || surf_dense || ' * 1.5) AND gravelius < 1.4 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
 			ELSE ''N''
 		END) WHERE densite = ''dense''';
 		
 	EXECUTE 'UPDATE ' || schema_prod || '.gf_uf_bat_lot3_union_' || idcom || ' SET constructible = 
 		(CASE 
-			WHEN surface >= ' || surf_groupee || ' * 4 THEN ''O''
-			WHEN surface >= (' || surf_groupee || ' * 2) AND surface < (' || surf_groupee || ' * 4) AND gravelius < 2.05 THEN ''O''
-			WHEN surface >= (' || surf_groupee || ') AND surface < (' || surf_groupee || ' * 2) AND gravelius < 1.5 THEN ''O''
+			WHEN surface >= ' || surf_groupee || ' * 4 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
+			WHEN surface >= (' || surf_groupee || ' * 2) AND surface < (' || surf_groupee || ' * 4) AND gravelius < 2.05 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
+			WHEN surface >= (' || surf_groupee || ') AND surface < (' || surf_groupee || ' * 2) AND gravelius < 1.5 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
 			ELSE ''N''
 		END) WHERE densite = ''groupee''';
 		
 	EXECUTE 'UPDATE ' || schema_prod || '.gf_uf_bat_lot3_union_' || idcom || ' SET constructible = 
 		(CASE 
-			WHEN surface >= ' || surf_diffuse || ' * 3 THEN ''O''
-			WHEN surface >= (' || surf_diffuse || ' * 1.5) AND surface < (' || surf_diffuse || ' * 3) AND gravelius < 2.25 THEN ''O''
-			WHEN surface >= (' || surf_diffuse || ') AND surface < (' || surf_diffuse || ' * 1.5) AND gravelius < 1.75 THEN ''O''
+			WHEN surface >= ' || surf_diffuse || ' * 3 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
+			WHEN surface >= (' || surf_diffuse || ' * 1.5) AND surface < (' || surf_diffuse || ' * 3) AND gravelius < 2.25 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
+			WHEN surface >= (' || surf_diffuse || ') AND surface < (' || surf_diffuse || ' * 1.5) AND gravelius < 1.75 AND taux_convexhull >= ' || taux_convexhull || ' THEN ''O''
 			ELSE ''N''
 		END) WHERE densite IN (''diffuse'',''isolee'')';
 		
