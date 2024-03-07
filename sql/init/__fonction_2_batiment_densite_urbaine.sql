@@ -578,7 +578,7 @@ BEGIN
 	--Mise à jour de la table gf_bati avec suppression des géométries geom2 et centroid
 	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_bati_' || idcom || ' DROP COLUMN geom2';
 	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_bati_' || idcom || ' DROP COLUMN centroid';
-	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_bati_' || idcom || ' DROP COLUMN geomloc';
+	--EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_bati_' || idcom || ' DROP COLUMN geomloc';
 	
 	--suppression tables temporaires pour la phase de création des aires de densité:
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.temp CASCADE';
