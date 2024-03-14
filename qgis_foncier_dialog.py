@@ -726,7 +726,7 @@ class QGisFoncierDialog(QtWidgets.QDialog, FORM_CLASS):
         
         req="SELECT "+schemaProd+".__2_batiment_densite_urbaine('"+schemaProd+"','"+schemaBDTopo+"','"+schemaFFDep+"','"+tabTup+"','"+geomTup+"','"+idcom+"','"+tabCommune+"','"+tabBati+"',"+surfminbat+","+surf_comblement+","+reserve_dense+","+reserve_groupe+","+reserve_diffus+","+reserve_isole+");"
         print(req)
-        '''
+
         cur.execute(req)
         conn.commit()
         val_progression=30        
@@ -785,7 +785,7 @@ class QGisFoncierDialog(QtWidgets.QDialog, FORM_CLASS):
         conn.commit()
         val_progression=100    
         self.progressBar.setValue(val_progression)     
-        '''
+
     #Affichage des couches SIG, création du fichier GPKG qui contient les couches produites et sauvegarde dans un fichier projet QGIS
     def productionCarte(self,idcom,dossierSortie,schemaProd,com):
 
