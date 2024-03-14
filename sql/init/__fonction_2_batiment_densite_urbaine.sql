@@ -28,12 +28,12 @@ BEGIN
 		SELECT idcom,idtup,nlocdep,nloccom,dcntpa,catpro2,catpro2txt,dcntarti,' || nom_geom_tup || ' as geom
 		FROM ' || schema_ff || '.' || nom_ff_tup || '
 		WHERE idcom = ''' || idcom || ''' and ncontour>0';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_tup_' || idcom || ' USING gist(geom)';
 
 	--2. extraction du contour de la commune
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_com_' || idcom || ''; 
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.gf_com_' || idcom || ' as
 		SELECT * FROM ' || schema_bdtopo || '.' || bdt_com || ' WHERE insee_com = ''' || idcom || '''';
-
 	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_com_' || idcom || ' USING gist(geom)';
 
 	--3. extraction des bâtiments sur la commune d'étude
@@ -54,7 +54,6 @@ BEGIN
 	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_bati_' || idcom || ' ALTER COLUMN centroid type geometry(Point, 2154)';
 	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_bati_' || idcom || ' ADD CONSTRAINT gf_bati_' || idcom || '_pkey PRIMARY KEY (id)';
 
-
 	--création d'un polygone de bâtiment plus petit pour éviter que les parcelles non bâties intersectent des bâtiments en limite de parcelle
 	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_bati_' || idcom || ' ADD COLUMN geom2 geometry(MultiPolygon, 2154)';
 	EXECUTE 'UPDATE ' || schema_prod || '.gf_bati_' || idcom || ' SET geom2=St_Multi(ST_Buffer(geom,-1))';
@@ -65,27 +64,51 @@ BEGIN
 
 	--5.Calcul de la densité urbaine
 	--5a. constructions isolees
+
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp1 CASCADE';
+	EXECUTE 'CREATE TABLE ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp1 AS 
+		SELECT row_number() over() as gid,(ST_Dump(ST_Union(ST_Buffer(geom,40)))).geom AS geom FROM ' || schema_prod || '.gf_bati_' || idcom || '';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp1 USING GIST(geom)';
+
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp2 CASCADE';
+	EXECUTE 'CREATE TABLE ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp2 AS 
+		SELECT Count(*) as nb,a.gid,a.geom FROM ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp1 a,' || schema_prod || '.gf_bati_' || idcom || ' AS bat WHERE ST_Intersects(a.geom,bat.centroid) GROUP BY a.gid,a.geom';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp2 USING GIST(geom)';
+
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp3 CASCADE';
+	EXECUTE 'CREATE TABLE ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp3 AS 
+		SELECT distinct id,nb FROM ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp2 b,' || schema_prod || '.gf_bati_' || idcom || ' AS bat WHERE ST_Intersects(b.geom,bat.geom)';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp3 USING BTREE(id)';
+
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_isole_' || idcom || ' CASCADE';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.gf_bati_isole_' || idcom || ' AS 
-		WITH 
-			a AS (SELECT row_number() over() as gid,(ST_Dump(ST_Union(ST_Buffer(geom,40)))).geom AS geom FROM ' || schema_prod || '.gf_bati_' || idcom || '),
-			b AS (SELECT Count(*) as nb,a.gid,a.geom FROM a,' || schema_prod || '.gf_bati_' || idcom || ' AS bat WHERE ST_Intersects(a.geom,bat.centroid) GROUP BY a.gid,a.geom),
-			c AS (SELECT distinct id,nb FROM b,' || schema_prod || '.gf_bati_' || idcom || ' AS bat WHERE ST_Intersects(b.geom,bat.geom))
 		SELECT
 			bat.id,bat.geom,bat.geom2,bat.centroid,
 			CASE WHEN nb < 5 THEN ''isolee''
 			END::varchar(10) AS densite
 		FROM ' || schema_prod || '.gf_bati_' || idcom || ' AS bat
-		LEFT JOIN c ON bat.id=c.id'
+		LEFT JOIN ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp3 c ON bat.id=c.id'
 		;
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_bati_isole_' || idcom || ' USING GIST(geom)';
 
 	--5b. Constructions diffuses et groupees (part1)
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp1 CASCADE';
+	EXECUTE 'CREATE TABLE ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp1 AS 
+		SELECT row_number() over() as gid,(ST_Dump(ST_Union(ST_Buffer(geom,20)))).geom AS geom FROM ' || schema_prod || '.gf_bati_isole_' || idcom || ' WHERE densite IS NULL';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp1 USING GIST(geom)';
+
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp2 CASCADE';
+	EXECUTE 'CREATE TABLE ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp2 AS 
+		SELECT Count(*) as nb,a.gid,a.geom FROM ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp1 a,' || schema_prod || '.gf_bati_isole_' || idcom || ' AS bat WHERE ST_Intersects(a.geom,bat.centroid) AND densite IS NULL GROUP BY a.gid,a.geom';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp2 USING GIST(geom)';
+
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp3 CASCADE';
+	EXECUTE 'CREATE TABLE ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp3 AS 
+		SELECT distinct id,nb FROM ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp2 b,' || schema_prod || '.gf_bati_isole_' || idcom || ' AS bat WHERE densite IS NULL AND ST_Intersects(b.geom,bat.geom)';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp3 USING btree(id)';
+
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_diffuse_' || idcom || ' CASCADE';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.gf_bati_diffuse_' || idcom || ' AS 
-		WITH 
-			a AS (SELECT row_number() over() as gid,(ST_Dump(ST_Union(ST_Buffer(geom,20)))).geom AS geom FROM ' || schema_prod || '.gf_bati_isole_' || idcom || ' WHERE densite IS NULL),
-			b AS (SELECT Count(*) as nb,a.gid,a.geom FROM a,' || schema_prod || '.gf_bati_isole_' || idcom || ' AS bat WHERE ST_Intersects(a.geom,bat.centroid) AND densite IS NULL GROUP BY a.gid,a.geom),
-			c AS (SELECT distinct id,nb FROM b,' || schema_prod || '.gf_bati_isole_' || idcom || ' AS bat WHERE densite IS NULL AND ST_Intersects(b.geom,bat.geom))
 		SELECT
 			bat.id,bat.geom,bat.geom2,bat.centroid,
 			CASE 
@@ -93,17 +116,29 @@ BEGIN
 				WHEN nb >= 5 AND nb <= 9 THEN ''groupee''
 			END::varchar(10) AS densite
 		FROM ' || schema_prod || '.gf_bati_isole_' || idcom || ' AS bat
-		LEFT JOIN c ON bat.id=c.id
+		LEFT JOIN ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp3 c ON bat.id=c.id
 		WHERE densite IS NULL'
 		; 
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_bati_diffuse_' || idcom || ' USING gist(geom)';
 
 	--5c. Constructions denses et groupees (part2)
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp1 CASCADE';
+	EXECUTE 'CREATE TABLE ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp1 AS 
+		SELECT row_number() over() as gid,(ST_Dump(ST_Union(ST_Buffer(geom,10)))).geom AS geom FROM ' || schema_prod || '.gf_bati_diffuse_' || idcom || ' WHERE densite IS NULL';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp1 USING GIST(geom)';
+
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp2 CASCADE';
+	EXECUTE 'CREATE TABLE ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp2 AS 
+		SELECT Count(*) as nb,a.gid,a.geom FROM ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp1 a,' || schema_prod || '.gf_bati_diffuse_' || idcom || ' AS bat WHERE ST_Intersects(a.geom,bat.centroid) AND densite IS NULL GROUP BY a.gid,a.geom';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp2 USING GIST(geom)';
+
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp3 CASCADE';
+	EXECUTE 'CREATE TABLE ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp3 AS 
+		SELECT distinct id,nb FROM ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp2 b,' || schema_prod || '.gf_bati_diffuse_' || idcom || ' AS bat WHERE densite IS NULL AND ST_Intersects(b.geom,bat.geom)';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp3 USING btree(id)';
+
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_groupe_' || idcom || ' CASCADE';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.gf_bati_groupe_' || idcom || ' AS 
-		WITH 
-			a AS (SELECT row_number() over() as gid,(ST_Dump(ST_Union(ST_Buffer(geom,10)))).geom AS geom FROM ' || schema_prod || '.gf_bati_diffuse_' || idcom || ' WHERE densite IS NULL),
-			b AS (SELECT Count(*) as nb,a.gid,a.geom FROM a,' || schema_prod || '.gf_bati_diffuse_' || idcom || ' AS bat WHERE ST_Intersects(a.geom,bat.centroid) AND densite IS NULL GROUP BY a.gid,a.geom),
-			c AS (SELECT distinct id,nb FROM b,' || schema_prod || '.gf_bati_diffuse_' || idcom || ' AS bat WHERE densite IS NULL AND ST_Intersects(b.geom,bat.geom))
 		SELECT
 			bat.id,bat.geom,bat.geom2,bat.centroid,
 			CASE 
@@ -111,9 +146,10 @@ BEGIN
 				WHEN nb > 5 THEN ''dense''
 			END::varchar(10) AS densite
 		FROM ' || schema_prod || '.gf_bati_diffuse_' || idcom || ' AS bat
-		LEFT JOIN c ON bat.id=c.id
+		LEFT JOIN ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp3 c ON bat.id=c.id
 		WHERE densite IS NULL'
 		; 
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_bati_groupe_' || idcom || ' USING gist(geom)';
 
 	--5d. création couche bâti densité urbaine
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_dense_' || idcom || ' CASCADE';
@@ -159,11 +195,13 @@ BEGIN
 			(ST_DUMP(ST_Union(St_Buffer(geom,15)))).geom as geom 
 		FROM ' || schema_prod || '.gf_bati_dense_' || idcom || ' 
 		WHERE densite=''dense''';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.temp using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.tache_sans_trous';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.tache_sans_trous AS
 		SELECT gid, st_makepolygon(st_exteriorring(geom)) as geom
 		FROM ' || schema_prod || '.temp';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.tache_sans_trous using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.anneaux_sup_2500';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.anneaux_sup_2500 AS
@@ -182,12 +220,14 @@ BEGIN
 	SELECT *
 	FROM creation_des_anneaux
 	WHERE st_area(geom)>2500';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.anneaux_sup_2500 using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.aire_dense';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.aire_dense AS
 		SELECT st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_difference((st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_union(t1.geom))),3))),(st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_union(t2.geom))),3)))))),3))::geometry (MultiPolygon,2154) as geom
 		FROM ' || schema_prod || '.tache_sans_trous as t1, ' || schema_prod || '.anneaux_sup_2500 as t2
 		WHERE st_intersects(t1.geom,t2.geom)';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.aire_dense using GIST (geom)';
 
 	EXECUTE 'INSERT INTO ' || schema_prod || '.aire_dense
 		SELECT st_multi(t1.geom)
@@ -201,11 +241,13 @@ BEGIN
 			(ST_DUMP(ST_Union(St_Buffer(geom,30)))).geom as geom 
 		FROM ' || schema_prod || '.gf_bati_dense_' || idcom || ' 
 		WHERE densite=''groupee''';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.temp using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.tache_sans_trous';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.tache_sans_trous AS
 		SELECT gid, st_makepolygon(st_exteriorring(geom)) as geom
 		FROM ' || schema_prod || '.temp';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.tache_sans_trous using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.anneaux_sup_2500';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.anneaux_sup_2500 AS
@@ -224,6 +266,7 @@ BEGIN
 	SELECT *
 	FROM creation_des_anneaux
 	WHERE st_area(geom)>2500';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.anneaux_sup_2500 using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.aire_groupee';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.aire_groupee AS
@@ -235,7 +278,7 @@ BEGIN
 		SELECT st_multi(t1.geom)
 		FROM ' || schema_prod || '.tache_sans_trous as t1, ' || schema_prod || '.aire_groupee as t2
 		where st_intersects(t1.geom,t2.geom) IS FALSE OR t2.geom is NULL';
-		
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.aire_groupee using GIST (geom)';	
 
 	--6c. phase 3 : diffuse (bouchage des trous <2500m², buffer de 45 mètres autour des bâtiments)
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.temp';
@@ -244,11 +287,13 @@ BEGIN
 			(ST_DUMP(ST_Union(St_Buffer(geom,45)))).geom as geom 
 		FROM ' || schema_prod || '.gf_bati_dense_' || idcom || ' 
 		WHERE densite=''diffuse''';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.temp using GIST (geom)';	
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.tache_sans_trous';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.tache_sans_trous AS
 		SELECT gid, st_makepolygon(st_exteriorring(geom)) as geom
 		FROM ' || schema_prod || '.temp';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.tache_sans_trous using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.anneaux_sup_2500';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.anneaux_sup_2500 AS
@@ -267,6 +312,7 @@ BEGIN
 	SELECT *  
 	FROM creation_des_anneaux
 	WHERE st_area(geom)>2500';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.anneaux_sup_2500 using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.aire_diffuse';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.aire_diffuse AS
@@ -278,7 +324,7 @@ BEGIN
 		SELECT st_multi(t1.geom)
 		FROM ' || schema_prod || '.tache_sans_trous as t1, ' || schema_prod || '.aire_diffuse as t2
 		where st_intersects(t1.geom,t2.geom) IS FALSE OR t2.geom is NULL';
-
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.aire_diffuse using GIST (geom)';
 
 	--6d. phase 4 : dense/groupee (bouchage des trous <2500m², buffer de 25 mètres autour des bâtiments)
 
@@ -288,11 +334,13 @@ BEGIN
 			(ST_DUMP(ST_Union(St_Buffer(geom,25)))).geom as geom 
 		FROM ' || schema_prod || '.gf_bati_dense_' || idcom || ' 
 		WHERE densite IN (''dense'',''groupee'')';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.temp using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.tache_sans_trous';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.tache_sans_trous AS
 		SELECT gid, st_makepolygon(st_exteriorring(geom)) as geom
 		FROM ' || schema_prod || '.temp';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.tache_sans_trous using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.anneaux_sup_2500';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.anneaux_sup_2500 AS
@@ -311,6 +359,7 @@ BEGIN
 	SELECT *
 	FROM creation_des_anneaux
 	WHERE st_area(geom)>2500';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.anneaux_sup_2500 using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.aire_dense_groupe';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.aire_dense_groupe AS
@@ -322,7 +371,7 @@ BEGIN
 		SELECT st_multi(t1.geom)
 		FROM ' || schema_prod || '.tache_sans_trous as t1, ' || schema_prod || '.aire_dense_groupe as t2
 		where st_intersects(t1.geom,t2.geom) IS FALSE OR t2.geom is NULL';
-		
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.aire_dense_groupe using GIST (geom)';	
 		
 	--6e. phase 5 : groupee/diffuse (bouchage des trous <2500m², buffer de 30 mètres autour des bâtiments)
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.temp';
@@ -331,11 +380,13 @@ BEGIN
 			(ST_DUMP(ST_Union(St_Buffer(geom,30)))).geom as geom 
 		FROM ' || schema_prod || '.gf_bati_dense_' || idcom || ' 
 		WHERE densite IN (''diffuse'',''groupee'')';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.temp using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.tache_sans_trous';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.tache_sans_trous AS
 		SELECT gid, st_makepolygon(st_exteriorring(geom)) as geom
 		FROM ' || schema_prod || '.temp';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.tache_sans_trous using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.anneaux_sup_2500';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.anneaux_sup_2500 AS
@@ -354,12 +405,14 @@ BEGIN
 	SELECT * 
 	FROM creation_des_anneaux
 	WHERE st_area(geom)>2500';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.anneaux_sup_2500 using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.aire_groupe_diffuse';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.aire_groupe_diffuse AS
 		SELECT st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_difference((st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_union(t1.geom))),3))),(st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_union(t2.geom))),3)))))),3))::geometry (MultiPolygon,2154) as geom
 		FROM ' || schema_prod || '.tache_sans_trous as t1, ' || schema_prod || '.anneaux_sup_2500 as t2
 		WHERE st_intersects(t1.geom,t2.geom)';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.aire_groupe_diffuse using GIST (geom)';
 
 	EXECUTE 'INSERT INTO ' || schema_prod || '.aire_groupe_diffuse
 		SELECT st_multi(t1.geom)
@@ -374,11 +427,13 @@ BEGIN
 			(ST_DUMP(ST_Union(St_Buffer(geom,45)))).geom as geom 
 		FROM ' || schema_prod || '.gf_bati_dense_' || idcom || ''
 		;
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.temp using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.tache_sans_trous';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.tache_sans_trous AS
 		SELECT gid, st_makepolygon(st_exteriorring(geom)) as geom
 		FROM ' || schema_prod || '.temp';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.tache_sans_trous using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.anneaux_sup_2500';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.anneaux_sup_2500 AS
@@ -397,12 +452,14 @@ BEGIN
 	SELECT * 
 	FROM creation_des_anneaux
 	WHERE st_area(geom)>2500';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.anneaux_sup_2500 using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.aire_diffuse_isolee';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.aire_diffuse_isolee AS
 		SELECT st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_difference((st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_union(t1.geom))),3))),(st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_union(t2.geom))),3)))))),3))::geometry (MultiPolygon,2154) as geom
 		FROM ' || schema_prod || '.tache_sans_trous as t1, ' || schema_prod || '.anneaux_sup_2500 as t2
 		WHERE st_intersects(t1.geom,t2.geom)';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.aire_diffuse_isolee using GIST (geom)';
 
 	EXECUTE 'INSERT INTO ' || schema_prod || '.aire_diffuse_isolee
 		SELECT st_multi(t1.geom)
@@ -414,6 +471,7 @@ BEGIN
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.temp11';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.temp11 as
 		SELECT ST_Union(geom) as geom FROM ' || schema_prod || '.aire_dense';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.temp11 using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.temp2';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.temp2 as
@@ -424,6 +482,7 @@ BEGIN
 			UNION
 			SELECT * FROM ' || schema_prod || '.aire_dense_groupe
 			) a';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.temp2 using GIST (geom)';
 
 	--suppression des trous <2500m²
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.temp';
@@ -435,6 +494,7 @@ BEGIN
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.tache_sans_trous AS
 		SELECT gid, st_makepolygon(st_exteriorring(geom)) as geom
 		FROM ' || schema_prod || '.temp';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.tache_sans_trous using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.anneaux_sup_2500';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.anneaux_sup_2500 AS
@@ -453,12 +513,14 @@ BEGIN
 	SELECT * 
 	FROM creation_des_anneaux
 	WHERE st_area(geom)>2500';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.anneaux_sup_2500 using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.temp22';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.temp22 AS
 		SELECT st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_difference((st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_union(t1.geom))),3))),		(st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_union(t2.geom))),3)))))),3))::geometry (MultiPolygon,2154) as geom
 		FROM ' || schema_prod || '.tache_sans_trous as t1, ' || schema_prod || '.anneaux_sup_2500 as t2
 		WHERE st_intersects(t1.geom,t2.geom)';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.temp22 using GIST (geom)';
 
 	EXECUTE 'INSERT INTO ' || schema_prod || '.temp22
 		SELECT st_multi(t1.geom)
@@ -468,7 +530,7 @@ BEGIN
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.temp222';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.temp222 as
 		SELECT ST_Union(geom) as geom FROM ' || schema_prod || '.temp22';
-
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.temp222 using GIST (geom)';
 		
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.temp3';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.temp3 as
@@ -485,17 +547,20 @@ BEGIN
 			UNION
 			SELECT * FROM ' || schema_prod || '.aire_diffuse_isolee
 			) a';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.temp3 using GIST (geom)';
 		
 	--suppression des trous <2500m²
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.temp';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.temp as
 		SELECT row_number() over() as gid,(ST_dump(geom)).geom as geom 
 		FROM ' || schema_prod || '.temp3';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.temp using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.tache_sans_trous';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.tache_sans_trous AS
 		SELECT gid, st_makepolygon(st_exteriorring(geom)) as geom
 		FROM ' || schema_prod || '.temp';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.tache_sans_trous using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.anneaux_sup_2500';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.anneaux_sup_2500 AS
@@ -514,12 +579,14 @@ BEGIN
 	SELECT *  
 	FROM creation_des_anneaux
 	WHERE st_area(geom)>2500';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.anneaux_sup_2500 using GIST (geom)';
 
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.temp33';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.temp33 AS
 		SELECT st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_difference((st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_union(t1.geom))),3))),(st_multi(st_collectionextract(st_forcecollection(st_makevalid(st_union(t2.geom))),3)))))),3))::geometry (MultiPolygon,2154) as geom
 		FROM ' || schema_prod || '.tache_sans_trous as t1, ' || schema_prod || '.anneaux_sup_2500 as t2
 		WHERE st_intersects(t1.geom,t2.geom)';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.temp33 using GIST (geom)';
 
 	EXECUTE 'INSERT INTO ' || schema_prod || '.temp33
 		SELECT st_multi(t1.geom)
@@ -529,6 +596,7 @@ BEGIN
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.temp333';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.temp333 AS
 		SELECT ST_Union(geom) AS geom FROM ' || schema_prod || '.temp33';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.temp333 using GIST (geom)';
 
 	-- création de la couche aire densité avec les 3 zones dense, groupee et diffuse
 
@@ -549,16 +617,16 @@ BEGIN
 		
 	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_aires_densite_' || idcom || ' using GIST (geom)';
 
-
 	--création de la couche de bâtiment nette
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_net_' || idcom || ' CASCADE';
 	EXECUTE 'CREATE TABLE ' || schema_prod || '.gf_bati_net_' || idcom || ' AS 
-		WITH a AS (SELECT a.id,a.densite,a.code_densite,a.tampon_bat, b.idtup, st_intersection(a.geom,b.geom) AS geom
+		WITH a AS (SELECT a.id,a.densite,a.code_densite,a.tampon_bat, b.idtup, st_intersection(st_multi(st_collectionextract(st_forcecollection(st_makevalid(a.geom)))),st_multi(st_collectionextract(st_forcecollection(st_makevalid(b.geom))))) AS geom
 				FROM ' || schema_prod || '.gf_bati_dense_' || idcom || ' AS a, ' || schema_prod || '.gf_tup_' || idcom || ' AS b
 				WHERE st_intersects(geom2, b.geom) and st_isvalid(b.geom) and st_isvalid(a.geom))
 		SELECT * FROM a';
 	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_bati_net_' || idcom || ' ADD COLUMN gid serial';
 	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_bati_net_' || idcom || ' ADD CONSTRAINT gf_bati_net_' || idcom || '_pkey PRIMARY KEY(gid)';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_bati_net_' || idcom || ' using GIST (geom)';
 
 	--regroupement des bâtiments par unité foncière
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bat_union_' || idcom || ' CASCADE';
@@ -574,6 +642,7 @@ BEGIN
 			WHEN code_densite=3 THEN ''diffuse''
 			WHEN code_densite=4 THEN ''isolee''
 		END';
+	EXECUTE 'CREATE INDEX ON ' || schema_prod || '.gf_bat_union_' || idcom || ' using GIST (geom)';
 
 	--Mise à jour de la table gf_bati avec suppression des géométries geom2 et centroid
 	EXECUTE 'ALTER TABLE ' || schema_prod || '.gf_bati_' || idcom || ' DROP COLUMN geom2';
@@ -602,6 +671,15 @@ BEGIN
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_groupe_' || idcom || ' CASCADE';
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_net_' || idcom || ' CASCADE';
 	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_aire_densite_' || idcom || ' CASCADE';
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp1 CASCADE';
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp2 CASCADE';
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_isole_' || idcom || '_temp3 CASCADE';
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp1 CASCADE';
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp2 CASCADE';
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_diffuse_' || idcom || '_temp3 CASCADE';
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp1 CASCADE';
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp2 CASCADE';
+	EXECUTE 'DROP TABLE IF EXISTS ' || schema_prod || '.gf_bati_groupe_' || idcom || '_temp3 CASCADE';		
 
 	--Fin de la partie traitement des batiments et de la densité urbaine via la couche des batiments
 END;

@@ -725,6 +725,8 @@ class QGisFoncierDialog(QtWidgets.QDialog, FORM_CLASS):
         self.progressBar.setValue(val_progression) 
         
         req="SELECT "+schemaProd+".__2_batiment_densite_urbaine('"+schemaProd+"','"+schemaBDTopo+"','"+schemaFFDep+"','"+tabTup+"','"+geomTup+"','"+idcom+"','"+tabCommune+"','"+tabBati+"',"+surfminbat+","+surf_comblement+","+reserve_dense+","+reserve_groupe+","+reserve_diffus+","+reserve_isole+");"
+        print(req)
+        '''
         cur.execute(req)
         conn.commit()
         val_progression=30        
@@ -746,20 +748,20 @@ class QGisFoncierDialog(QtWidgets.QDialog, FORM_CLASS):
         cur.execute(req)
         conn.commit()
         val_progression=70       
-        self.progressBar.setValue(val_progression)                 
+        self.progressBar.setValue(val_progression)           
 
         req="SELECT "+schemaProd+".__6_acces_indirect('"+schemaProd+"','"+idcom+"',"+larg_acces+");"
         cur.execute(req)
         conn.commit()
         val_progression=72        
-        self.progressBar.setValue(val_progression)                
+        self.progressBar.setValue(val_progression)        
         
         req="SELECT "+schemaProd+".__7_harmonisation_lots('"+schemaProd+"','"+idcom+"');"
         cur.execute(req)
         conn.commit()
         val_progression=74        
         self.progressBar.setValue(val_progression)                 
-        
+
         req="SELECT "+schemaProd+".__8_croisement_plu('"+schemaProd+"','"+idcom+"');"
         cur.execute(req)
         conn.commit()
@@ -769,7 +771,7 @@ class QGisFoncierDialog(QtWidgets.QDialog, FORM_CLASS):
         req="SELECT "+schemaProd+".__9_typologie_prop('"+schemaProd+"','"+idcom+"');"
         cur.execute(req)
         conn.commit()
-        val_progression=80        
+        val_progression=80    
         self.progressBar.setValue(val_progression)                 
 
         req="SELECT "+schemaProd+".__11_calcul_potentiel('"+schemaProd+"','"+idcom+"',"+surf_dense+");"
@@ -781,9 +783,9 @@ class QGisFoncierDialog(QtWidgets.QDialog, FORM_CLASS):
         req="SELECT "+schemaProd+".__12_tab_synthese('"+schemaProd+"','"+idcom+"');"
         cur.execute(req)
         conn.commit()
-        val_progression=100        
+        val_progression=100    
         self.progressBar.setValue(val_progression)     
-
+        '''
     #Affichage des couches SIG, création du fichier GPKG qui contient les couches produites et sauvegarde dans un fichier projet QGIS
     def productionCarte(self,idcom,dossierSortie,schemaProd,com):
 
@@ -1184,8 +1186,7 @@ class QGisFoncierDialog(QtWidgets.QDialog, FORM_CLASS):
                 pass
         else:
             pass
-                    
-            
+                                
     def recupCheminFichierShp(self):
         try:
             global filename
@@ -1263,23 +1264,6 @@ class QGisFoncierDialog(QtWidgets.QDialog, FORM_CLASS):
         except:
             pass        
         
-    #fonction d'import couche SHP dans Postgresql
-    def ImportCoucheShpBDTOPO(self,chemin,nomCouche,schema):
-        # Récupération des paramètres de connexion au serveur PG
-        AdrServPG=self.lineAdrServ.text()
-        port=self.linePortServ.text()
-        user=self.lineUserServ.text()
-        mdp=self.lineMdpServ.text()
-        NomBD=self.lineBaseDonnees.text()
-
-        str_rep_python = sys.base_prefix  # ajout MM
-        str_rep_base = os.path.join(os.path.split(os.path.split(str_rep_python)[0])[0], 'bin')  # ajout MM
-
-        os.environ['PGPASSWORD'] = mdp
-        os.environ['PGCLIENTENCODING'] = 'UTF-8'
-        ogr2ogrPath = os.path.join(str_rep_base, "ogr2ogr")  # modif MM      
-        os.system(ogr2ogrPath +' -f PostgreSQL PG:"dbname='+ NomBD +' host='+ AdrServPG +' port='+ port +' user='+ user +' password='+ mdp +'" '+ chemin +' -lco GEOMETRY_NAME=geom -nlt PROMOTE_TO_MULTI -lco SPATIAL_INDEX=GIST -a_srs EPSG:2154 -nln '+schema+'.'+nomCouche+' -overwrite')        
-        
     #importation des couches
     def ImportFF(self):
         # Récupération des paramètres de connexion au serveur PG
@@ -1293,179 +1277,87 @@ class QGisFoncierDialog(QtWidgets.QDialog, FORM_CLASS):
             QMessageBox.information(self,"Information","L'import des fichiers fonciers a été réalisé avec succès.")
         except:
             QMessageBox.critical(None,"Erreur","L'import des fichiers fonciers a échoué ")      
-
-        
-        
-    def ImportRoutes(self):
-        # Récupération des paramètres de connexion au serveur PG
-        conn = psycopg2.connect(self.ConnectServer())
-        cur = conn.cursor()
-        schemaBDTopo = self.comboBoxChoixSchemaBDTopo.currentText()
-        
-        ficRoute = self.lineCheminFicRoutes.text()
-
-        nomCoucheRoute, ok = QInputDialog.getText(self, f"Nom de la couche", "Nom de la couche")
-        if ok:
-            if schemaBDTopo == "":
-                QMessageBox.warning(self,"Attention","Aucun schéma n'est défini pour importer la couche !!!")
-            elif nomCoucheRoute == "":
-                QMessageBox.warning(self,"Attention","Veuillez renseigner un nom de couche avant de cliquer sur OK.")
-            elif re.match('^[a-z][a-z0-9]\w*$', nomCoucheRoute):        
-                try:
-                    cur.execute("SELECT * FROM "+schemaBDTopo+"."+nomCoucheRoute+" limit 1;")
-                    reply = QMessageBox.question(self, 'Confirmation','La couche des routes de la BDTOPO sur ce département est déjà présente dans la base. Voulez-vous la remplacer ?', QMessageBox.Yes, QMessageBox.No)
-                    if reply == QMessageBox.Yes:
-                        cur.execute("DROP TABLE IF EXISTS "+schemaBDTopo+"."+nomCoucheRoute+";")
-                        conn.commit()
-                        conn.close()
-                        self.ImportCoucheShpBDTOPO(self.lineCheminFicRoutes.text(),nomCoucheRoute,schemaBDTopo)
-                        QMessageBox.information(self,"Information","L'import de la couche Routes de la BDTOPO a été réalisé avec succès.")
-                    else:
-                        pass
-                except:
-                    self.ImportCoucheShpBDTOPO(self.lineCheminFicRoutes.text(),nomCoucheRoute,schemaBDTopo)
-                    QMessageBox.information(self,"Information","L'import de la couche Routes de la BDTOPO a été réalisé avec succès.")
-            else:
-                QMessageBox.warning(self,"Attention","Le nom de la couche doit commencer par une lettre et ne pas contenir de caractères spéciaux !!!")
-        else:
-            pass
         
     def ImportCom(self):
-        # Récupération des paramètres de connexion au serveur PG
-        conn = psycopg2.connect(self.ConnectServer())
-        cur = conn.cursor()
-        schemaBDTopo = self.comboBoxChoixSchemaBDTopo.currentText()
-        
-        ficCom = self.lineCheminFicCom.text()
-        
-        nomCoucheCom, ok = QInputDialog.getText(self, f"Nom de la couche", "Nom de la couche")
-        if ok:
-            if schemaBDTopo == "":
-                QMessageBox.warning(self,"Attention","Aucun schéma n'est défini pour importer la couche !!!")
-            elif nomCoucheCom == "":
-                QMessageBox.warning(self,"Attention","Veuillez renseigner un nom de couche avant de cliquer sur OK.")
-            elif re.match('^[a-z][a-z0-9]\w*$', nomCoucheCom):
-                try:
-                    cur.execute("SELECT * FROM "+schemaBDTopo+"."+nomCoucheCom+" limit 1;")
-                    reply = QMessageBox.question(self, 'Confirmation','La couche des communes de la BDTOPO sur ce département est déjà présente dans la base. Voulez-vous la remplacer ?', QMessageBox.Yes, QMessageBox.No)
-                    if reply == QMessageBox.Yes:
-                        cur.execute("DROP TABLE IF EXISTS "+schemaBDTopo+"."+nomCoucheCom+";")
-                        conn.commit()
-                        conn.close()                
-                        self.ImportCoucheShpBDTOPO(self.lineCheminFicCom.text(),nomCoucheCom,schemaBDTopo)                
-                        QMessageBox.information(self,"Information","L'import de la couche Communes de la BDTOPO a été réalisé avec succès.")
-                    else:                
-                        pass
-                except:            
-                    self.ImportCoucheShpBDTOPO(self.lineCheminFicCom.text(),nomCoucheCom,schemaBDTopo)
-                    QMessageBox.information(self,"Information","L'import de la couche Communes de la BDTOPO a été réalisé avec succès.") 
-            else:
-                QMessageBox.warning(self,"Attention","Le nom de la couche doit commencer par une lettre et ne pas contenir de caractères spéciaux !!!")
-        else:
-            pass
+        self.ImportShape('commune')
 
     def ImportBat(self):
-        # Récupération des paramètres de connexion au serveur PG
-        conn = psycopg2.connect(self.ConnectServer())
-        cur = conn.cursor()
-        schemaBDTopo = self.comboBoxChoixSchemaBDTopo.currentText()
-        
-        ficBati = self.lineCheminFicBat.text()
-            
-        nomCoucheBati, ok = QInputDialog.getText(self, f"Nom de la couche", "Nom de la couche")
-        if ok:
-            if schemaBDTopo == "":
-                QMessageBox.warning(self,"Attention","Aucun schéma n'est défini pour importer la couche !!!")
-            elif nomCoucheBati == "":
-                QMessageBox.warning(self,"Attention","Veuillez renseigner un nom de couche avant de cliquer sur OK.")
-            elif re.match('^[a-z][a-z0-9]\w*$', nomCoucheBati):            
-                try:
-                    cur.execute("SELECT * FROM "+schemaBDTopo+"."+nomCoucheBati+" limit 1;")
-                    reply = QMessageBox.question(self, 'Confirmation','La couche des bâtiments de la BDTOPO sur ce département est déjà présente dans la base. Voulez-vous la remplacer ?', QMessageBox.Yes, QMessageBox.No)
-                    if reply == QMessageBox.Yes:
-                        cur.execute("DROP TABLE IF EXISTS "+schemaBDTopo+"."+nomCoucheBati)
-                        conn.commit()
-                        conn.close()
-                        self.ImportCoucheShpBDTOPO(self.lineCheminFicBat.text(),nomCoucheBati,schemaBDTopo)
-                        QMessageBox.information(self,"Information","L'import de la couche des bâtiments de la BDTOPO a été réalisé avec succès.")
-                    else:
-                        pass
-                except:
-                    self.ImportCoucheShpBDTOPO(self.lineCheminFicBat.text(),nomCoucheBati,schemaBDTopo)
-                    QMessageBox.information(self,"Information","L'import de la couche des bâtiments de la BDTOPO a été réalisé avec succès.")
-            else:
-                QMessageBox.warning(self,"Attention","Le nom de la couche doit commencer par une lettre et ne pas contenir de caractères spéciaux !!!")
-        else:
-            pass
+        self.ImportShape('batiment')
+
+    def ImportRoutes(self):
+        self.ImportShape('route')        
 
     def ImportPLU(self):
-        # Récupération des paramètres de connexion au serveur PG
-        conn = psycopg2.connect(self.ConnectServer())
-        cur = conn.cursor()
-        schemaData = self.comboBoxChoixSchemaData.currentText()
-        
-        ficPlu = self.lineCheminFicPLU.text()
-        
-        nomCouchePlu, ok = QInputDialog.getText(self, f"Nom de la couche", "Nom de la couche")
-        if ok:
-            if schemaData == "":
-                QMessageBox.warning(self,"Attention","Aucun schéma n'est défini pour importer la couche !!!")
-            elif nomCouchePlu == "":
-                QMessageBox.warning(self,"Attention","Veuillez renseigner un nom de couche avant de cliquer sur OK.")
-            elif re.match('^[a-z][a-z0-9]\w*$', nomCouchePlu):        
-                try:
-                    cur.execute("SELECT * FROM "+schemaData+"."+nomCouchePlu+" limit 1;")
-                    reply = QMessageBox.question(self, 'Confirmation','La couche des PLU sur ce département est déjà présente dans la base. Voulez-vous la remplacer ?', QMessageBox.Yes, QMessageBox.No)
-                    if reply == QMessageBox.Yes:
-                        cur.execute("DROP TABLE IF EXISTS "+schemaData+"."+nomCouchePlu)
-                        conn.commit()
-                        conn.close()
-                        self.ImportCoucheShpBDTOPO(self.lineCheminFicPLU.text(),nomCouchePlu,schemaData)
-                        QMessageBox.information(self,"Information","L'import de la couche des PLU a été réalisé avec succès.")
-                    else:
-                        pass
-                except:
-                    self.ImportCoucheShpBDTOPO(self.lineCheminFicPLU.text(),nomCouchePlu,schemaData)
-                    QMessageBox.information(self,"Information","L'import de la couche des PLU a été réalisé avec succès.")
-            else:
-                QMessageBox.warning(self,"Attention","Le nom de la couche doit commencer par une lettre et ne pas contenir de caractères spéciaux !!!")
-        else:
-            pass
+        self.ImportShape('PLU')
                     
     def ImportEnvUrb(self):
+        self.ImportShape('envurb')
+
+    def ImportShape(self,couche):
         # Récupération des paramètres de connexion au serveur PG
         conn = psycopg2.connect(self.ConnectServer())
         cur = conn.cursor()
-        schemaData = self.comboBoxChoixSchemaData.currentText()
         
-        ficEnvurb = self.lineCheminFicEnvUrb.text()
-
-        nomCoucheEnvurb, ok = QInputDialog.getText(self, f"Nom de la couche", "Nom de la couche")
+        if couche == 'route' :            
+            ficCouche = self.lineCheminFicRoutes.text()
+            schema = self.comboBoxChoixSchemaBDTopo.currentText()
+        elif couche == 'commune' :
+            ficCouche = self.lineCheminFicCom.text()
+            schema = self.comboBoxChoixSchemaBDTopo.currentText()
+        elif couche == 'batiment' :
+            ficCouche = self.lineCheminFicBat.text()
+            schema = self.comboBoxChoixSchemaBDTopo.currentText()
+        elif couche == 'PLU' :
+            ficCouche = self.lineCheminFicPLU.text()
+            schema = self.comboBoxChoixSchemaData.currentText()
+        elif couche == 'envurb' :
+            ficCouche = self.lineCheminFicEnvUrb.text()
+            schema = self.comboBoxChoixSchemaData.currentText()            
+        print(couche+ "  " + schema)
+        nomCouche, ok = QInputDialog.getText(self, f"Nom de la couche", "Nom de la couche")
         if ok:
-            if schemaData == "":
+            if schema == "":
                 QMessageBox.warning(self,"Attention","Aucun schéma n'est défini pour importer la couche !!!")
-            elif nomCoucheEnvurb == "":
+            elif nomCouche == "":
                 QMessageBox.warning(self,"Attention","Veuillez renseigner un nom de couche avant de cliquer sur OK.")
-            elif re.match('^[a-z][a-z0-9]\w*$', nomCoucheEnvurb):            
+            elif re.match('^[a-z][a-z0-9]\w*$', nomCouche):        
                 try:
-                    cur.execute("SELECT * FROM "+schemaData+"."+nomCoucheEnvurb+" limit 1;")
-                    reply = QMessageBox.question(self, 'Confirmation','La couche enveloppe urbaine sur ce département est déjà présente dans la base. Voulez-vous la remplacer ?', QMessageBox.Yes, QMessageBox.No)
+                    cur.execute("SELECT * FROM "+schema+"."+nomCouche+" limit 1;")
+                    reply = QMessageBox.question(self, "Confirmation","La couche "+ couche +" de la BDTOPO sur ce département est déjà présente dans la base. Voulez-vous la remplacer ?", QMessageBox.Yes, QMessageBox.No)
                     if reply == QMessageBox.Yes:
-                        cur.execute("DROP TABLE IF EXISTS "+schemaData+"."+nomCoucheEnvurb)
+                        cur.execute("DROP TABLE IF EXISTS "+schema+"."+nomCouche+";")
                         conn.commit()
                         conn.close()
-                        self.ImportCoucheShpBDTOPO(self.lineCheminFicEnvUrb.text(),nomCoucheEnvurb,schemaData)
-                        QMessageBox.information(self,"Information","L'import de la couche enveloppe urbaine a été réalisé avec succès.")
+                        self.ImportCoucheShp(ficCouche,nomCouche,schema)
+                        QMessageBox.information(self,"Information","L'import de la couche "+ couche +" de la BDTOPO a été réalisé avec succès.")
                     else:
                         pass
                 except:
-                    self.ImportCoucheShpBDTOPO(self.lineCheminFicEnvUrb.text(),nomCoucheEnvurb,schemaData)
-                    QMessageBox.information(self,"Information","L'import de la couche enveloppe urbaine a été réalisé avec succès.")
+                    self.ImportCoucheShp(ficCouche,nomCouche,schema)
+                    QMessageBox.information(self,"Information","L'import de la couche "+ couche +" de la BDTOPO a été réalisé avec succès.")
             else:
                 QMessageBox.warning(self,"Attention","Le nom de la couche doit commencer par une lettre et ne pas contenir de caractères spéciaux !!!")
         else:
-            pass
-            
+            pass                
+
+    #fonction d'import couche SHP dans Postgresql
+    def ImportCoucheShp(self,chemin,nomCouche,schema):
+        # Récupération des paramètres de connexion au serveur PG
+        AdrServPG=self.lineAdrServ.text()
+        port=self.linePortServ.text()
+        user=self.lineUserServ.text()
+        mdp=self.lineMdpServ.text()
+        NomBD=self.lineBaseDonnees.text()
+
+        str_rep_python = sys.base_prefix  # ajout MM
+        str_rep_base = os.path.join(os.path.split(os.path.split(str_rep_python)[0])[0], 'bin')  # ajout MM
+
+        os.environ['PGPASSWORD'] = mdp
+        os.environ['PGCLIENTENCODING'] = 'UTF-8'
+        ogr2ogrPath = os.path.join(str_rep_base, "ogr2ogr")  # modif MM      
+        os.system(ogr2ogrPath +' -f PostgreSQL PG:"dbname='+ NomBD +' host='+ AdrServPG +' port='+ port +' user='+ user +' password='+ mdp +'" "'+ chemin +'" -lco GEOMETRY_NAME=geom -nlt PROMOTE_TO_MULTI -lco SPATIAL_INDEX=GIST -a_srs EPSG:2154 -nln '+schema+'.'+nomCouche+' -overwrite')        
+        #print(ogr2ogrPath +' -f PostgreSQL PG:"dbname='+ NomBD +' host='+ AdrServPG +' port='+ port +' user='+ user +' password='+ mdp +'" "'+ chemin +'" -lco GEOMETRY_NAME=geom -nlt PROMOTE_TO_MULTI -lco SPATIAL_INDEX=GIST -a_srs EPSG:2154 -nln '+schema+'.'+nomCouche+' -overwrite')        
+
     def ImportExclusion(self):
         # Récupération des paramètres de connexion au serveur PG
         conn = psycopg2.connect(self.ConnectServer())
