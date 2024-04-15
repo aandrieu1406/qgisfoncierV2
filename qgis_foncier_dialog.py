@@ -1374,12 +1374,12 @@ class QGisFoncierDialog(QtWidgets.QDialog, FORM_CLASS):
                 cur.execute("DROP TABLE IF EXISTS "+schemaData+"."+nomExclusion)
                 conn.commit()
                 conn.close()
-                self.ImportCoucheShpBDTOPO(self.lineCheminFicExclusion.text(),nomExclusion,schemaData)
+                self.ImportCoucheShp(self.lineCheminFicExclusion.text(),nomExclusion,schemaData)
                 QMessageBox.information(self,"Information","L'import de la couche d''exclusion a été réalisé avec succès.")
             else:
                 pass
         except:
-            self.ImportCoucheShpBDTOPO(self.lineCheminFicExclusion.text(),nomExclusion,schemaData)
+            self.ImportCoucheShp(self.lineCheminFicExclusion.text(),nomExclusion,schemaData)
             QMessageBox.information(self,"Information","L'import de la couche d''exclusion a été réalisé avec succès.")
 
         
